@@ -39,8 +39,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
-      - master
-      - QA_**
+    - master
+    - QA_**
 
 permissions:
   contents: read
@@ -58,62 +58,129 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { php-version: '82', experimental: false, arch: 'amd64', exclude-phpunit-groups: '--exclude-group extension-iconv' }
-          - { php-version: '82', experimental: false, arch: 'arm64/v8', exclude-phpunit-groups: '--exclude-group extension-iconv' }
-          - { php-version: '82', experimental: false, arch: 'arm/v7', exclude-phpunit-groups: '--exclude-group extension-iconv --exclude-group 32bit-incompatible' }
-          - { php-version: '82', experimental: false, arch: 'i386', exclude-phpunit-groups: '--exclude-group extension-iconv --exclude-group 32bit-incompatible' }
-          - { php-version: '82', experimental: true, arch: 'ppc64le', exclude-phpunit-groups: '--exclude-group extension-iconv' }
-          - { php-version: '82', experimental: false, arch: 's390x', exclude-phpunit-groups: '--exclude-group extension-iconv --exclude-group 32bit-incompatible' }
+        - {php-version: '82', experimental: false, arch: 'amd64', exclude-phpunit-groups: '--exclude-group extension-iconv'}
+        - {php-version: '82', experimental: false, arch: 'arm64/v8', exclude-phpunit-groups: '--exclude-group extension-iconv'}
+        - {php-version: '82', experimental: false, arch: 'arm/v7', exclude-phpunit-groups: '--exclude-group extension-iconv --exclude-group 32bit-incompatible'}
+        - {php-version: '82', experimental: false, arch: 'i386', exclude-phpunit-groups: '--exclude-group extension-iconv --exclude-group 32bit-incompatible'}
+        - {php-version: '82', experimental: true, arch: 'ppc64le', exclude-phpunit-groups: '--exclude-group extension-iconv'}
+        - {php-version: '82', experimental: false, arch: 's390x', exclude-phpunit-groups: '--exclude-group extension-iconv --exclude-group 32bit-incompatible'}
     steps:
-      - name: Checkout code
-        uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          persist-credentials: false
+    - name: Checkout code
+      uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        persist-credentials: false
 
-      - name: Assert instrumentation is live
-        # Socket existence, not LD_PRELOAD: co-monitor's loader clears
-        # LD_PRELOAD once it has injected, so an empty value is what success
-        # looks like. co-hostd also daemonizes, so pgrep does not match it.
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
-
-
-      - name: Write script
+    - name: Write script
         # tcpdf allowed memory exhausted needs the memory_limit workaround
         # musl-locales and musl-locales-lang are needed to run some locale specific tests
         # gettext is needed to run generate-mo
         # git is needed to work around a version detection issue with composer, see: https://github.com/Roave/SecurityAdvisories/issues/76
         # ctype for psalm
-        run: |
-          printf "set -exu && \
-          export V='%s' && \
-          apk add --update --no-cache \
-          php\$V-cli php\$V-mysqli php\$V-session php\$V-mbstring php\$V-ctype php\$V-sodium \
-          php\$V-iconv php\$V-xml php\$V-tokenizer php\$V-xmlwriter php\$V-simplexml \
-          php\$V-dom php\$V-json php\$V-bz2 php\$V-curl php\$V-gd php\$V-zip php\$V-bcmath \
-          musl-locales musl-locales-lang \
-          gettext composer git && \
-          composer config version "$(php -r "define('VERSION_SUFFIX', ''); require_once('src/Version.php'); echo \PhpMyAdmin\Version::VERSION;")" && \
-          composer install && \
-          ./bin/generate-mo && \
-          php\$V -d memory_limit=512M ./vendor/bin/phpunit --no-logging --no-coverage --testsuite unit --display-all-issues %s" \
-          "${{ matrix.php-version }}" "${{ matrix.exclude-phpunit-groups }}" > ./do-tests.sh
+      run: |
+        printf "set -exu && \
+        export V='%s' && \
+        apk add --update --no-cache \
+        php\$V-cli php\$V-mysqli php\$V-session php\$V-mbstring php\$V-ctype php\$V-sodium \
+        php\$V-iconv php\$V-xml php\$V-tokenizer php\$V-xmlwriter php\$V-simplexml \
+        php\$V-dom php\$V-json php\$V-bz2 php\$V-curl php\$V-gd php\$V-zip php\$V-bcmath \
+        musl-locales musl-locales-lang \
+        gettext composer git && \
+        composer config version "$(php -r "define('VERSION_SUFFIX', ''); require_once('src/Version.php'); echo \PhpMyAdmin\Version::VERSION;")" && \
+        composer install && \
+        ./bin/generate-mo && \
+        php\$V -d memory_limit=512M ./vendor/bin/phpunit --no-logging --no-coverage --testsuite unit --display-all-issues %s" \
+        "${{ matrix.php-version }}" "${{ matrix.exclude-phpunit-groups }}" > ./do-tests.sh
 
-      - name: Set up multi arch support
-        run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+    - name: Set up multi arch support
+      run: docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
-      - name: Print arch
-        run: docker run --rm --platform linux/${{ matrix.arch }} alpine:3.19 uname -a
+    - name: Print arch
+      run: docker run --rm --platform linux/${{ matrix.arch }} alpine:3.19 uname -a
 
-      - name: Run tests on php ${{ matrix.php-version }}
-        run: docker run -v $PWD:/app --workdir /app --rm --platform linux/${{ matrix.arch }} alpine:3.19 sh /app/do-tests.sh
+    - name: Run tests on php ${{ matrix.php-version }}
+      run: docker run -v $PWD:/app --workdir /app --rm --platform linux/${{ matrix.arch }} alpine:3.19 sh /app/do-tests.sh
 
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   test-php:
     name: Test on PHP ${{ matrix.php-version }}, ${{ matrix.composer-dependency }} and ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -126,80 +193,147 @@ jobs:
         composer-dependency: [locked, highest]
         php-extensions: ['mbstring, iconv, mysqli, zip, gd, bz2']
         include:
-          - php-version: '8.6'
-            os: ubuntu-latest
-            composer-dependency: locked
-            composer-options: '--ignore-platform-req=php+'
-            php-extensions: 'mbstring, iconv, mysqli, zip, bz2'
+        - php-version: '8.6'
+          os: ubuntu-latest
+          composer-dependency: locked
+          composer-options: '--ignore-platform-req=php+'
+          php-extensions: 'mbstring, iconv, mysqli, zip, bz2'
     steps:
-      - name: Checkout code
-        uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
+    - name: Checkout code
+      uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
           # Fetch some commits for Scrutinizer coverage upload
-          fetch-depth: 15
-          persist-credentials: false
+        fetch-depth: 15
+        persist-credentials: false
 
-      - name: Assert instrumentation is live
-        # Socket existence, not LD_PRELOAD: co-monitor's loader clears
-        # LD_PRELOAD once it has injected, so an empty value is what success
-        # looks like. co-hostd also daemonizes, so pgrep does not match it.
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Install gettext
+      run: sudo apt-get install -y gettext
 
+    - name: Generate mo files
+      run: ./bin/generate-mo --quiet
 
-      - name: Install gettext
-        run: sudo apt-get install -y gettext
+    - name: Set up PHP ${{ matrix.php-version }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-version }}
+        extensions: ${{ matrix.php-extensions }}
+        coverage: xdebug
 
-      - name: Generate mo files
-        run: ./bin/generate-mo --quiet
+    - name: Install Composer dependencies
+      uses: ramsey/composer-install@v4
+      with:
+        dependency-versions: ${{ matrix.composer-dependency }}
+        composer-options: ${{ matrix.composer-options }}
 
-      - name: Set up PHP ${{ matrix.php-version }}
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php-version }}
-          extensions: ${{ matrix.php-extensions }}
-          coverage: xdebug
+    - name: Run PHP tests
+      run: composer run phpunit -- --testsuite unit --display-all-issues
 
-      - name: Install Composer dependencies
-        uses: ramsey/composer-install@v4
-        with:
-          dependency-versions: ${{ matrix.composer-dependency }}
-          composer-options: ${{ matrix.composer-options }}
+    - name: Send coverage
+      uses: codecov/codecov-action@v7
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: unit-${{ matrix.php-version }}-${{ matrix.os }}
+        name: phpunit-${{ matrix.php-version }}-${{ matrix.os }}
 
-      - name: Run PHP tests
-        run: composer run phpunit -- --testsuite unit --display-all-issues
-
-      - name: Send coverage
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: unit-${{ matrix.php-version }}-${{ matrix.os }}
-          name: phpunit-${{ matrix.php-version }}-${{ matrix.os }}
-
-      - name: Send coverage to Scrutinizer
-        uses: sudo-bot/action-scrutinizer@latest
+    - name: Send coverage to Scrutinizer
+      uses: sudo-bot/action-scrutinizer@latest
         # Do not run this step on forked versions of the main repository (example: contributor forks)
-        if: github.repository == 'phpmyadmin/phpmyadmin'
-        continue-on-error: true
-        with:
-          cli-args: "--format=php-clover build/logs/clover.xml --revision=${{ github.event.pull_request.head.sha || github.sha }}"
+      if: github.repository == 'phpmyadmin/phpmyadmin'
+      continue-on-error: true
+      with:
+        cli-args: "--format=php-clover build/logs/clover.xml --revision=${{ github.event.pull_request.head.sha || github.sha }}"
 
-      - name: Send coverage to Codacy
-        uses: codacy/codacy-coverage-reporter-action@v1
+    - name: Send coverage to Codacy
+      uses: codacy/codacy-coverage-reporter-action@v1
         # Do not run this step on forked versions of the main repository (example: contributor forks)
-        if: github.repository == 'phpmyadmin/phpmyadmin'
+      if: github.repository == 'phpmyadmin/phpmyadmin'
         # Upload can fail on forks or if the secret is missing
-        continue-on-error: true
-        with:
-          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          coverage-reports: build/logs/clover.xml
+      continue-on-error: true
+      with:
+        project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+        coverage-reports: build/logs/clover.xml
 
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   test-php-optional-extensions:
     name: Test on PHP (+ ext-${{ matrix.extension }}) ${{ matrix.php-version }} and ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -210,71 +344,138 @@ jobs:
         os: [ubuntu-latest]
         extension: ["dbase"]
     steps:
-      - name: Checkout code
-        uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
+    - name: Checkout code
+      uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
           # Fetch some commits for Scrutinizer coverage upload
-          fetch-depth: 15
-          persist-credentials: false
+        fetch-depth: 15
+        persist-credentials: false
 
-      - name: Assert instrumentation is live
-        # Socket existence, not LD_PRELOAD: co-monitor's loader clears
-        # LD_PRELOAD once it has injected, so an empty value is what success
-        # looks like. co-hostd also daemonizes, so pgrep does not match it.
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Install gettext
+      run: sudo apt-get install -y gettext
 
+    - name: Generate mo files
+      run: ./bin/generate-mo --quiet
 
-      - name: Install gettext
-        run: sudo apt-get install -y gettext
+    - name: Set up PHP ${{ matrix.php-version }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-version }}
+        extensions: ${{ matrix.extension }}, mbstring, iconv, mysqli, zip, gd
+        coverage: xdebug
 
-      - name: Generate mo files
-        run: ./bin/generate-mo --quiet
+    - name: Install Composer dependencies
+      uses: ramsey/composer-install@v4
 
-      - name: Set up PHP ${{ matrix.php-version }}
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php-version }}
-          extensions: ${{ matrix.extension }}, mbstring, iconv, mysqli, zip, gd
-          coverage: xdebug
+    - name: Run PHP tests
+      run: composer run phpunit -- --testsuite unit --display-all-issues
 
-      - name: Install Composer dependencies
-        uses: ramsey/composer-install@v4
+    - name: Send coverage
+      uses: codecov/codecov-action@v7
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: ${{ matrix.extension }}-extension
+        name: php-${{ matrix.php-version }}-${{ matrix.extension }}-enabled
 
-      - name: Run PHP tests
-        run: composer run phpunit -- --testsuite unit --display-all-issues
-
-      - name: Send coverage
-        uses: codecov/codecov-action@v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: ${{ matrix.extension }}-extension
-          name: php-${{ matrix.php-version }}-${{ matrix.extension }}-enabled
-
-      - name: Send coverage to Scrutinizer
-        uses: sudo-bot/action-scrutinizer@latest
+    - name: Send coverage to Scrutinizer
+      uses: sudo-bot/action-scrutinizer@latest
         # Do not run this step on forked versions of the main repository (example: contributor forks)
-        if: github.repository == 'phpmyadmin/phpmyadmin'
-        continue-on-error: true
-        with:
-          cli-args: "--format=php-clover build/logs/clover.xml --revision=${{ github.event.pull_request.head.sha || github.sha }}"
+      if: github.repository == 'phpmyadmin/phpmyadmin'
+      continue-on-error: true
+      with:
+        cli-args: "--format=php-clover build/logs/clover.xml --revision=${{ github.event.pull_request.head.sha || github.sha }}"
 
-      - name: Send coverage to Codacy
-        uses: codacy/codacy-coverage-reporter-action@v1
+    - name: Send coverage to Codacy
+      uses: codacy/codacy-coverage-reporter-action@v1
         # Do not run this step on forked versions of the main repository (example: contributor forks)
-        if: github.repository == 'phpmyadmin/phpmyadmin'
+      if: github.repository == 'phpmyadmin/phpmyadmin'
         # Upload can fail on forks or if the secret is missing
-        continue-on-error: true
-        with:
-          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
-          coverage-reports: build/logs/clover.xml
+      continue-on-error: true
+      with:
+        project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+        coverage-reports: build/logs/clover.xml
 
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
+
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
+
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
   test-php-with-newer-phpunit:
     name: Test on PHP ${{ matrix.php }} with PHPUnit ${{ matrix.phpunit }}
     runs-on: ubuntu-latest
@@ -282,52 +483,119 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { php: '8.3', phpunit: '12' }
-          - { php: '8.4', phpunit: '13' }
+        - {php: '8.3', phpunit: '12'}
+        - {php: '8.4', phpunit: '13'}
     steps:
-      - name: Checkout code
-        uses: crashappsec/action-checkout@main
-        with:
-          chalk: ${{ env.CHALK_ON }}
-          profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
-          observables_continue_on_error: false
-          lfs: false
-          persist-credentials: false
+    - name: Checkout code
+      uses: crashappsec/action-checkout@main
+      with:
+        chalk: ${{ env.CHALK_ON }}
+        profile: ${{ inputs.profile || 'curiosity-tests-racecar' }}
+        observables_continue_on_error: false
+        lfs: false
+        persist-credentials: false
 
-      - name: Assert instrumentation is live
-        # Socket existence, not LD_PRELOAD: co-monitor's loader clears
-        # LD_PRELOAD once it has injected, so an empty value is what success
-        # looks like. co-hostd also daemonizes, so pgrep does not match it.
-        if: env.CHALK_ON == 'true'
-        run: |
-          test -n "${CURIOSITY_ROOT:-}" || { echo "::error::CURIOSITY_ROOT unset - observables never installed"; exit 1; }
-          test -S "${CURIOSITY_SOCKET_NAME:?socket name unset}" || { echo "::error::co-hostd socket absent"; exit 1; }
+    - name: Install gettext and generate translation files
+      run: |
+        sudo apt-get install -y gettext
+        ./bin/generate-mo --quiet
 
+    - name: Set up PHP ${{ matrix.php }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php }}
+        extensions: mbstring, iconv, mysqli, zip, gd, bz2
 
-      - name: Install gettext and generate translation files
-        run: |
-          sudo apt-get install -y gettext
-          ./bin/generate-mo --quiet
+    - name: Update composer.json
+      shell: bash
+      env:
+        PHPUNIT_VERSION: ${{ matrix.phpunit }}
+      run: |
+        composer config --unset platform --no-interaction --ansi
+        composer remove --dev vimeo/psalm psalm/plugin-phpunit --no-update --no-interaction --ansi
+        composer require --dev phpunit/phpunit:^"$PHPUNIT_VERSION" --no-update --no-interaction --ansi
 
-      - name: Set up PHP ${{ matrix.php }}
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php }}
-          extensions: mbstring, iconv, mysqli, zip, gd, bz2
+    - name: Install Composer dependencies
+      uses: ramsey/composer-install@v4
+      with:
+        dependency-versions: highest
 
-      - name: Update composer.json
-        shell: bash
-        env:
-          PHPUNIT_VERSION: ${{ matrix.phpunit }}
-        run: |
-          composer config --unset platform --no-interaction --ansi
-          composer remove --dev vimeo/psalm psalm/plugin-phpunit --no-update --no-interaction --ansi
-          composer require --dev phpunit/phpunit:^"$PHPUNIT_VERSION" --no-update --no-interaction --ansi
+    - name: Run PHP tests
+      run: vendor/bin/phpunit --testsuite unit --no-coverage --no-logging --display-all-issues
+    - name: Check observables and crashes
+      if: always() && env.CHALK_ON == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        root="${CURIOSITY_ROOT:-}"
+        home="${CURIOSITY_HOME:-/mnt/curiosity}"
+        obs="${home}/observables"
+        fail=0
 
-      - name: Install Composer dependencies
-        uses: ramsey/composer-install@v4
-        with:
-          dependency-versions: highest
+        echo "::group::curiosity layout"
+        echo "CURIOSITY_ROOT=${root:-<unset>}"
+        echo "CURIOSITY_HOME=${home}"
+        ls -la "${obs}" 2>/dev/null || echo "no observables dir at ${obs}"
+        echo "::endgroup::"
 
-      - name: Run PHP tests
-        run: vendor/bin/phpunit --testsuite unit --no-coverage --no-logging --display-all-issues
+        # Observables for THIS run+attempt. The prefix matters: a stale file from an
+        # earlier run on the same mount would otherwise pass.
+        prefix="${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+        shopt -s nullglob
+        mine=("${obs}/${prefix}"*)
+        if [ ${#mine[@]} -eq 0 ]; then
+          mine=("${obs}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-observables"*)
+        fi
+        if [ ${#mine[@]} -eq 0 ]; then
+          echo "::error::no observables for run ${prefix} in ${obs} - instrumentation produced nothing"
+          fail=1
+        else
+          echo "observables present: ${#mine[@]} file(s)"
+          printf '  %s\n' "${mine[@]}"
+        fi
+
+        for f in "${mine[@]}"; do
+          case "$f" in
+            *.jsonl|*.json|*.combined)
+              if ! jq --slurp "." "$f" > /dev/null 2>&1; then
+                echo "::error::observables do not parse: $f"
+                fail=1
+              fi
+              ;;
+          esac
+        done
+
+        # Crash thresholds copied from check-run: a few null frames are noise, more than
+        # five is a stack walk into nothing.
+        for f in "${root}"/log/co-host*.log "${home}"/log/co-host*.log; do
+          [ -f "$f" ] || continue
+          echo "Asserting that there is no crash in $f"
+          if [ "$(grep -c 'p 00000000' "$f" 2>/dev/null || echo 0)" -gt 5 ] \
+            || [ "$(grep -E -c 'FATAL: Uncaught signal|Address not mapped at|RAX 0x.*RBX 0x' "$f" 2>/dev/null || echo 0)" -gt 1 ]; then
+            echo "::error::crash signature in $f"
+            grep -E 'FATAL: Uncaught signal|Address not mapped at' "$f" | head -5 || true
+            fail=1
+          fi
+        done
+
+        cores=("${root}"/coredump.* "${home}"/coredump.*)
+        if [ ${#cores[@]} -gt 0 ]; then
+          echo "::error::coredump present: ${cores[*]}"
+          fail=1
+        fi
+
+        for f in "${root}"/runc.log "${root}"/runc.global.log \
+                 "${home}"/runc.log "${home}"/runc.global.log; do
+          [ -f "$f" ] || continue
+          if grep -q '^E:' "$f"; then
+            echo "::error::error in $f"
+            grep '^E:' "$f" | head -5
+            fail=1
+          fi
+        done
+
+        if [ "$fail" -ne 0 ]; then
+          echo "::error::instrumentation check FAILED"
+          exit 1
+        fi
+        echo "instrumentation check passed"
